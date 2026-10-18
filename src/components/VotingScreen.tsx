@@ -3,27 +3,40 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Player } from '../types/game';
 import { PlayerAvatar } from './PlayerAvatar';
 import { sound } from '../utils/audio';
 
 interface VotingScreenProps {
   players: Player[];
+  savedVotes?: Record<string, string>;
+  onVotesUpdate?: (votes: Record<string, string>) => void;
   onCompleteVoting: (votes: Record<string, string>) => void;
 }
 
 export const VotingScreen: React.FC<VotingScreenProps> = ({
   players,
+  savedVotes = {},
+  onVotesUpdate,
   onCompleteVoting,
 }) => {
   const [voteMode, setVoteMode] = useState<'secret' | 'open'>('secret');
-  const [currentVoterIndex, setCurrentVoterIndex] = useState(0);
-  const [votes, setVotes] = useState<Record<string, string>>({});
+
+  // Find first player who has not voted yet
+  const firstUnvotedIndex = players.findIndex((p) => !savedVotes[p.id]);
+  const initialVoterIdx = firstUnvotedIndex === -1 ? 0 : firstUnvotedIndex;
+
+  const [currentVoterIndex, setCurrentVoterIndex] = useState(initialVoterIdx);
+  const [votes, setVotes] = useState<Record<string, string>>(savedVotes);
   const [selectedSuspectId, setSelectedSuspectId] = useState<string | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
 
-  const currentVoter = players[currentVoterIndex];
+  useEffect(() => {
+    onVotesUpdate?.(votes);
+  }, [votes, onVotesUpdate]);
+
+  const currentVoter = players[currentVoterIndex] || players[0];
 
   const handleSelectSuspect = (suspectId: string) => {
     sound.playBlip(540);

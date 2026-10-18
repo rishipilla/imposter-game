@@ -70,3 +70,18 @@ export type GamePhase =
   | 'results'
   | 'wordbank'
   | 'history';
+
+export interface ActiveSession {
+  phase: GamePhase;
+  players: Player[];
+  settings: GameSettings;
+  currentWordPair: WordPair | null;
+  currentAssignments: PlayerAssignment[];
+  currentImposterIds: string[];
+  currentStartingPlayerId: string;
+  currentRevealIndex: number;
+  roundResult: RoundResult | null;
+  savedVotes?: Record<string, string>;
+  savedVoterIndex?: number;
+  lastUpdated: number;
+}

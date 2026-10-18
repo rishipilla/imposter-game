@@ -2,5 +2,7 @@
   "name": "Imposter — Social Word Deduction Party Game",
   "description": "A pass-and-play social deduction word party game with 280+ curated things and words, minimalist monochrome styling, secret reveal cards, and voting.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

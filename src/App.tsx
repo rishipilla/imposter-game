@@ -11,6 +11,7 @@ import {
   WordPair,
   PlayerAssignment,
   RoundResult,
+  ActiveSession,
 } from './types/game';
 import { selectWordPair, assignRoles, resolveRound } from './game/gameEngine';
 import { sound } from './utils/audio';
@@ -24,6 +25,13 @@ import { ResultsScreen } from './components/ResultsScreen';
 import { WordBankModal } from './components/WordBankModal';
 import { HowToPlayModal } from './components/HowToPlayModal';
 import { HistoryModal } from './components/HistoryModal';
+
+const SESSION_STORAGE_KEY = 'imposter_active_session_v3';
+const ROSTER_STORAGE_KEY = 'imposter_saved_roster_v3';
+const SETTINGS_STORAGE_KEY = 'imposter_saved_settings_v3';
+const USED_PAIRS_KEY = 'imposter_used_pairs_v3';
+const CUSTOM_WORDS_KEY = 'imposter_custom_words_v3';
+const HISTORY_KEY = 'imposter_match_history_v3';
 
 const DEFAULT_PLAYERS: Player[] = [
   { id: 'p_1', name: 'Alex', score: 0 },
@@ -42,65 +50,133 @@ const DEFAULT_SETTINGS: GameSettings = {
   soundEnabled: true,
 };
 
-export default function App() {
-  const [phase, setPhase] = useState<GamePhase>('title');
-  const [players, setPlayers] = useState<Player[]>(() => {
-    try {
-      const stored = localStorage.getItem('imposter_players_clean');
-      if (stored) return JSON.parse(stored);
-    } catch {
-      // ignore
+function loadSavedSession(): ActiveSession | null {
+  try {
+    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && Array.isArray(parsed.players) && parsed.settings) {
+      return parsed as ActiveSession;
     }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function loadSavedRoster(): Player[] | null {
+  try {
+    const raw = localStorage.getItem(ROSTER_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length >= 3) {
+      return parsed as Player[];
+    }
+  } catch {}
+  return null;
+}
+
+function loadSavedSettings(): GameSettings | null {
+  try {
+    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.difficulty === 'string') {
+      return parsed as GameSettings;
+    }
+  } catch {}
+  return null;
+}
+
+export default function App() {
+  const initialSession = loadSavedSession();
+  const initialRoster = loadSavedRoster();
+  const initialSettings = loadSavedSettings();
+
+  // Restore previous phase if game was in-progress, else title
+  const [phase, setPhase] = useState<GamePhase>(() => {
+    if (initialSession) {
+      // If was in setup or active round, resume directly
+      if (
+        initialSession.phase === 'setup' ||
+        (initialSession.currentWordPair &&
+          ['reveal', 'discussion', 'voting', 'results'].includes(initialSession.phase))
+      ) {
+        return initialSession.phase;
+      }
+    }
+    return 'title';
+  });
+
+  // Track the latest round phase so resuming from Title always goes to the exact right screen
+  const [lastActiveRoundPhase, setLastActiveRoundPhase] = useState<GamePhase>(() => {
+    if (
+      initialSession?.currentWordPair &&
+      ['reveal', 'discussion', 'voting', 'results'].includes(initialSession.phase)
+    ) {
+      return initialSession.phase;
+    }
+    return 'reveal';
+  });
+
+  const [players, setPlayers] = useState<Player[]>(() => {
+    if (initialSession?.players?.length) return initialSession.players;
+    if (initialRoster?.length) return initialRoster;
     return DEFAULT_PLAYERS;
   });
 
   const [settings, setSettings] = useState<GameSettings>(() => {
-    try {
-      const stored = localStorage.getItem('imposter_settings_clean');
-      if (stored) return JSON.parse(stored);
-    } catch {
-      // ignore
-    }
+    if (initialSession?.settings) return initialSession.settings;
+    if (initialSettings) return initialSettings;
     return DEFAULT_SETTINGS;
   });
 
   const [usedPairIds, setUsedPairIds] = useState<string[]>(() => {
     try {
-      const stored = localStorage.getItem('imposter_used_pairs_clean');
+      const stored = localStorage.getItem(USED_PAIRS_KEY);
       if (stored) return JSON.parse(stored);
-    } catch {
-      // ignore
-    }
+    } catch {}
     return [];
   });
 
   const [customWordPairs, setCustomWordPairs] = useState<WordPair[]>(() => {
     try {
-      const stored = localStorage.getItem('imposter_custom_words_clean');
+      const stored = localStorage.getItem(CUSTOM_WORDS_KEY);
       if (stored) return JSON.parse(stored);
-    } catch {
-      // ignore
-    }
+    } catch {}
     return [];
   });
 
   const [matchHistory, setMatchHistory] = useState<RoundResult[]>(() => {
     try {
-      const stored = localStorage.getItem('imposter_match_history_clean');
+      const stored = localStorage.getItem(HISTORY_KEY);
       if (stored) return JSON.parse(stored);
-    } catch {
-      // ignore
-    }
+    } catch {}
     return [];
   });
 
-  // Current Round State
-  const [currentWordPair, setCurrentWordPair] = useState<WordPair | null>(null);
-  const [currentAssignments, setCurrentAssignments] = useState<PlayerAssignment[]>([]);
-  const [currentImposterIds, setCurrentImposterIds] = useState<string[]>([]);
-  const [currentStartingPlayerId, setCurrentStartingPlayerId] = useState<string>('');
-  const [currentRevealIndex, setCurrentRevealIndex] = useState(0);
-  const [roundResult, setRoundResult] = useState<RoundResult | null>(null);
+  // Active round state restored from session
+  const [currentWordPair, setCurrentWordPair] = useState<WordPair | null>(
+    () => initialSession?.currentWordPair || null
+  );
+  const [currentAssignments, setCurrentAssignments] = useState<PlayerAssignment[]>(
+    () => initialSession?.currentAssignments || []
+  );
+  const [currentImposterIds, setCurrentImposterIds] = useState<string[]>(
+    () => initialSession?.currentImposterIds || []
+  );
+  const [currentStartingPlayerId, setCurrentStartingPlayerId] = useState<string>(
+    () => initialSession?.currentStartingPlayerId || ''
+  );
+  const [currentRevealIndex, setCurrentRevealIndex] = useState<number>(
+    () => initialSession?.currentRevealIndex ?? 0
+  );
+  const [roundResult, setRoundResult] = useState<RoundResult | null>(
+    () => initialSession?.roundResult || null
+  );
+  const [savedVotes, setSavedVotes] = useState<Record<string, string>>(
+    () => initialSession?.savedVotes || {}
+  );
 
   // Modals
   const [activeModal, setActiveModal] = useState<
@@ -108,34 +184,76 @@ export default function App() {
   >('none');
   const [isMuted, setIsMuted] = useState(sound.isMuted());
 
-  // Save changes to localStorage
+  // Update lastActiveRoundPhase when entering an in-round phase
+  useEffect(() => {
+    if (['reveal', 'discussion', 'voting', 'results'].includes(phase)) {
+      setLastActiveRoundPhase(phase);
+    }
+  }, [phase]);
+
+  // Persist session state to localStorage on every change
+  useEffect(() => {
+    const sessionData: ActiveSession = {
+      phase,
+      players,
+      settings,
+      currentWordPair,
+      currentAssignments,
+      currentImposterIds,
+      currentStartingPlayerId,
+      currentRevealIndex,
+      roundResult,
+      savedVotes,
+      lastUpdated: Date.now(),
+    };
+    try {
+      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessionData));
+    } catch {
+      // storage unavailable or full
+    }
+  }, [
+    phase,
+    players,
+    settings,
+    currentWordPair,
+    currentAssignments,
+    currentImposterIds,
+    currentStartingPlayerId,
+    currentRevealIndex,
+    roundResult,
+    savedVotes,
+  ]);
+
+  // Persist dedicated roster so custom player names & scores are NEVER lost
   useEffect(() => {
     try {
-      localStorage.setItem('imposter_players_clean', JSON.stringify(players));
+      localStorage.setItem(ROSTER_STORAGE_KEY, JSON.stringify(players));
     } catch {}
   }, [players]);
 
+  // Persist dedicated settings
   useEffect(() => {
     try {
-      localStorage.setItem('imposter_settings_clean', JSON.stringify(settings));
+      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
     } catch {}
   }, [settings]);
 
+  // Persist auxiliary data
   useEffect(() => {
     try {
-      localStorage.setItem('imposter_used_pairs_clean', JSON.stringify(usedPairIds));
+      localStorage.setItem(USED_PAIRS_KEY, JSON.stringify(usedPairIds));
     } catch {}
   }, [usedPairIds]);
 
   useEffect(() => {
     try {
-      localStorage.setItem('imposter_custom_words_clean', JSON.stringify(customWordPairs));
+      localStorage.setItem(CUSTOM_WORDS_KEY, JSON.stringify(customWordPairs));
     } catch {}
   }, [customWordPairs]);
 
   useEffect(() => {
     try {
-      localStorage.setItem('imposter_match_history_clean', JSON.stringify(matchHistory));
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(matchHistory));
     } catch {}
   }, [matchHistory]);
 
@@ -155,12 +273,12 @@ export default function App() {
   // Autostart URL parameter support (?autostart=1)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('autostart') === '1') {
+    if (params.get('autostart') === '1' && phase === 'title') {
       setPhase('setup');
     }
-  }, []);
+  }, [phase]);
 
-  // Keyboard shortcuts
+  // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'm' || e.key === 'M') {
@@ -194,14 +312,53 @@ export default function App() {
     setCurrentStartingPlayerId(roleResult.startingPlayerId);
     setCurrentRevealIndex(0);
     setRoundResult(null);
+    setSavedVotes({});
 
     setUsedPairIds((prev) => [...prev, wordPair.id]);
     setPhase('reveal');
   }, [players, settings, usedPairIds]);
 
+  // Reset round state to setup (keeps player names and scores!)
+  const handleResetToSetup = () => {
+    setCurrentWordPair(null);
+    setCurrentAssignments([]);
+    setCurrentImposterIds([]);
+    setCurrentStartingPlayerId('');
+    setCurrentRevealIndex(0);
+    setRoundResult(null);
+    setSavedVotes({});
+    setPhase('setup');
+  };
+
+  // Reset player scores back to 0 while keeping customized names
+  const handleResetScores = () => {
+    setPlayers((prev) => prev.map((p) => ({ ...p, score: 0 })));
+  };
+
+  // Full reset to fresh defaults
+  const handleResetSessionAndRoster = () => {
+    try {
+      localStorage.removeItem(SESSION_STORAGE_KEY);
+      localStorage.removeItem(ROSTER_STORAGE_KEY);
+      localStorage.removeItem(SETTINGS_STORAGE_KEY);
+    } catch {}
+    setPlayers(DEFAULT_PLAYERS);
+    setSettings(DEFAULT_SETTINGS);
+    setCurrentWordPair(null);
+    setCurrentAssignments([]);
+    setCurrentImposterIds([]);
+    setCurrentStartingPlayerId('');
+    setCurrentRevealIndex(0);
+    setRoundResult(null);
+    setSavedVotes({});
+    setPhase('title');
+  };
+
   // Finish voting & calculate outcome
   const handleCompleteVoting = (votes: Record<string, string>) => {
     if (!currentWordPair) return;
+
+    setSavedVotes(votes);
 
     const result = resolveRound({
       roundId: 'round_' + Date.now(),
@@ -215,6 +372,7 @@ export default function App() {
 
     setRoundResult(result);
 
+    // Update accumulated scores
     setPlayers((prev) =>
       prev.map((player) => ({
         ...player,
@@ -237,6 +395,19 @@ export default function App() {
 
   const startingPlayerObj =
     players.find((p) => p.id === currentStartingPlayerId) || players[0];
+
+  const hasActiveRound = Boolean(currentWordPair && currentAssignments.length > 0);
+
+  const phaseDisplayNames: Record<GamePhase, string> = {
+    title: 'Title',
+    setup: 'Setup',
+    reveal: 'Card Reveal',
+    discussion: 'Clues & Discussion',
+    voting: 'Voting',
+    results: 'Results',
+    wordbank: 'Word Bank',
+    history: 'History',
+  };
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-zinc-950 font-sans text-zinc-100 flex flex-col">
@@ -295,11 +466,24 @@ export default function App() {
       <main className="relative w-full h-full flex-1 overflow-hidden pt-12">
         {phase === 'title' && (
           <TitleScreen
-            onStart={() => setPhase('setup')}
+            players={players}
+            settings={settings}
+            onStartSetup={handleResetToSetup}
+            onStartRoundDirectly={startNewRound}
+            onResume={
+              hasActiveRound
+                ? () => {
+                    setPhase(lastActiveRoundPhase);
+                  }
+                : undefined
+            }
+            hasActiveRound={hasActiveRound}
+            activePhaseName={phaseDisplayNames[lastActiveRoundPhase || 'reveal']}
             onOpenWordBank={() => setActiveModal('wordbank')}
             onOpenHowToPlay={() => setActiveModal('howtoplay')}
             onOpenHistory={() => setActiveModal('history')}
             historyCount={matchHistory.length}
+            onResetSession={handleResetSessionAndRoster}
           />
         )}
 
@@ -311,6 +495,7 @@ export default function App() {
             onUpdateSettings={setSettings}
             onStartGame={startNewRound}
             onBackToTitle={() => setPhase('title')}
+            onResetScores={handleResetScores}
           />
         )}
 
@@ -336,7 +521,12 @@ export default function App() {
         )}
 
         {phase === 'voting' && (
-          <VotingScreen players={players} onCompleteVoting={handleCompleteVoting} />
+          <VotingScreen
+            players={players}
+            savedVotes={savedVotes}
+            onVotesUpdate={setSavedVotes}
+            onCompleteVoting={handleCompleteVoting}
+          />
         )}
 
         {phase === 'results' && roundResult && currentWordPair && (
@@ -346,7 +536,7 @@ export default function App() {
             wordPair={currentWordPair}
             settings={settings}
             onPlayNextRound={startNewRound}
-            onNewGameSetup={() => setPhase('setup')}
+            onNewGameSetup={handleResetToSetup}
             onReturnToTitle={() => setPhase('title')}
             onUpdateRoundResult={setRoundResult}
           />
@@ -382,7 +572,7 @@ export default function App() {
               Game Paused
             </h3>
             <p className="text-xs text-zinc-400">
-              Pass-and-play round paused
+              Session state is safely remembered on this device
             </p>
 
             <div className="w-full flex flex-col gap-2 pt-2">
@@ -393,7 +583,7 @@ export default function App() {
                 }}
                 className="w-full py-3 rounded-xl bg-white hover:bg-zinc-200 text-zinc-950 font-bold text-xs uppercase tracking-wider cursor-pointer transition-colors shadow-sm"
               >
-                Resume Game
+                Resume Current Round
               </button>
 
               <button
@@ -411,7 +601,7 @@ export default function App() {
                 onClick={() => {
                   sound.playBlip();
                   setActiveModal('none');
-                  setPhase('setup');
+                  handleResetToSetup();
                 }}
                 className="w-full py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white font-medium text-xs cursor-pointer border border-zinc-700"
               >

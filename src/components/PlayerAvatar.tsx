@@ -11,6 +11,7 @@ interface PlayerAvatarProps {
   highlight?: boolean;
   isImposterGlitch?: boolean;
   subtext?: string;
+  showLabel?: boolean;
 }
 
 export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
@@ -19,6 +20,7 @@ export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
   highlight = false,
   isImposterGlitch = false,
   subtext,
+  showLabel = true,
 }) => {
   const getInitials = (str: string) => {
     const trimmed = str.trim();
@@ -53,7 +55,7 @@ export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
         <span>{initials}</span>
       </div>
 
-      {name && (
+      {showLabel && name && (
         <div className="mt-1.5">
           <p className="text-sm font-medium text-zinc-200 truncate max-w-[120px]">
             {name}
